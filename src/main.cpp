@@ -1,271 +1,286 @@
-// Trabalho P1 - Teoria dos Grafos (COS 242)
-// ---------------------------------------------------------------
-// Programa-cliente da biblioteca: e o "painel de botoes" que o corretor
-// e o script de experimentos usam. Toda a logica de grafos mora na
-// biblioteca (include/ + algoritmos); aqui so ha leitura de argumentos,
-// chamada das funcoes, cronometragem e escrita dos arquivos de saida.
-//
-// Convenções importantes:
-// - Vertices na linha de comando usam a numeracao DO ARQUIVO (1..n);
-//   a conversao para 0..n-1 e feita aqui (funcao checkV).
-// - O tempo medido EXCLUI leitura do disco e escrita da saida, como pede
-//   o enunciado: o cronometro envolve so a chamada do algoritmo.
-// - A saida padrao usa linhas "chave=valor" para o script
-//   (scripts/run_estudos.sh) coletar com grep e montar o CSV.
+#include "CSRGraph.hpp"
+#include "algorithms.hpp"
 
-#include <chrono>
-#include <cstdio>
-#include <cstdlib>
-#include <filesystem>
-#include <fstream>
 #include <iostream>
-#include <memory>
+#include <iomanip>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
-
-#include "Graph.hpp"
-#include "algorithms.hpp"
-#include "io.hpp"
+#include <unordered_map>
+#include <random>
+#include <chrono>
+#include <filesystem>
 
 namespace fs = std::filesystem;
 
-static void usage(const char *prog) {
-    std::cerr << "Uso: " << prog << " <arquivo> --rep lista|matriz [--out DIR] [opcoes]\n"
-              << "Opcoes:\n"
-              << "  --bfs S            BFS a partir de S (1-indexado), grava bfs_S.txt\n"
-              << "  --dfs S            DFS a partir de S (1-indexado), grava dfs_S.txt\n"
-              << "  --dist U,V         distancia entre U e V via BFS\n"
-              << "  --diameter-exact   diametro exato (n BFSs; so grafos pequenos)\n"
-              << "  --diameter-approx [S]  double-sweep a partir de S (padrao 1)\n"
-              << "  --stats            estatisticas de grau, grava stats.txt\n"
-              << "  --components       componentes conexas, grava components.txt\n"
-              << "  --benchmark-bfs K  K BFSs de origens distribuidas, tempo medio\n"
-              << "  --benchmark-dfs K  idem para DFS\n";
-}
-
-static double nowSeconds() {
-    using namespace std::chrono;
-    return duration<double>(steady_clock::now().time_since_epoch()).count();
-}
-
-static void writeTree(const std::string &path, const std::vector<int> &parent,
-                      const std::vector<int> &level) {
-    // Formato pedido no enunciado: uma linha por vertice com "vertice pai
-    // nivel", tudo 1-indexado. Pai -1 = raiz ou inalcançavel; nivel -1 =
-    // inalcançavel (a raiz tem nivel 0).
-    std::ofstream out(path);
-    if (!out)
-        throw std::runtime_error("nao foi possivel escrever: " + path);
-    int n = (int)parent.size();
-    for (int v = 0; v < n; ++v) {
-        int p = parent[v] < 0 ? -1 : parent[v] + 1; // 1-indexado; -1 = sem pai
-        out << (v + 1) << ' ' << p << ' ' << level[v] << '\n';
-    }
-}
-
-int main(int argc, char **argv) {
-    if (argc < 4) {
-        usage(argv[0]);
-        return 1;
-    }
-    std::string file = argv[1];
-    std::string rep;
-    std::string outDir = "./out";
-    std::vector<int> bfsSrc, dfsSrc;
-    std::vector<std::pair<int, int>> dists;
-    bool diamExact = false;
-    bool diamApprox = false;
-    int diamStart = 1;
-    bool doStats = false, doComp = false;
-    int benchBfs = 0, benchDfs = 0;
-
-    for (int i = 2; i < argc; ++i) {
-        std::string a = argv[i];
-        auto need = [&](int j) {
-            if (j >= argc) {
-                std::cerr << "Falta valor para " << a << "\n";
-                std::exit(1);
-            }
-        };
-        if (a == "--rep") {
-            need(i + 1);
-            rep = argv[++i];
-        } else if (a == "--out") {
-            need(i + 1);
-            outDir = argv[++i];
-        } else if (a == "--bfs") {
-            need(i + 1);
-            bfsSrc.push_back(std::atoi(argv[++i]));
-        } else if (a == "--dfs") {
-            need(i + 1);
-            dfsSrc.push_back(std::atoi(argv[++i]));
-        } else if (a == "--dist") {
-            need(i + 1);
-            std::string s = argv[++i];
-            auto comma = s.find(',');
-            if (comma == std::string::npos) {
-                std::cerr << "--dist espera U,V\n";
-                return 1;
-            }
-            dists.emplace_back(std::atoi(s.substr(0, comma).c_str()),
-                               std::atoi(s.substr(comma + 1).c_str()));
-        } else if (a == "--diameter-exact") {
-            diamExact = true;
-        } else if (a == "--diameter-approx") {
-            diamApprox = true;
-            if (i + 1 < argc && argv[i + 1][0] != '-') {
-                diamStart = std::atoi(argv[++i]);
-            }
-        } else if (a == "--stats") {
-            doStats = true;
-        } else if (a == "--components") {
-            doComp = true;
-        } else if (a == "--benchmark-bfs") {
-            need(i + 1);
-            benchBfs = std::atoi(argv[++i]);
-        } else if (a == "--benchmark-dfs") {
-            need(i + 1);
-            benchDfs = std::atoi(argv[++i]);
-        } else {
-            std::cerr << "Opcao desconhecida: " << a << "\n";
-            usage(argv[0]);
-            return 1;
+/**
+ * @brief Resolve o caminho de um arquivo na pasta data/, funcionando tanto
+ * quando executado da raiz do projeto quanto de dentro do diretório build/.
+ */
+std::string resolveDataPath(const std::string& filename) {
+    const std::vector<std::string> candidates = {
+        "data/" + filename,
+        "../data/" + filename,
+        filename
+    };
+    for (const auto& candidate : candidates) {
+        if (fs::exists(candidate)) {
+            return candidate;
         }
     }
-    if (rep != "lista" && rep != "matriz") {
-        std::cerr << "--rep deve ser lista|matriz\n";
-        return 1;
+    return "data/" + filename;
+}
+
+/**
+ * @brief Formata um vetor de vértices como string legível: "10 -> 25 -> 20".
+ */
+std::string formatPath(const std::vector<int>& path) {
+    if (path.empty()) return "Inalcancavel";
+    std::ostringstream oss;
+    for (std::size_t i = 0; i < path.size(); ++i) {
+        oss << path[i];
+        if (i + 1 < path.size()) oss << " -> ";
+    }
+    return oss.str();
+}
+
+/**
+ * @brief Executa os Estudos de Caso 1 e 2 para um grafo ponderado grafo_W_X.txt:
+ *  - Item 1: Distância e caminho mínimo entre o vértice 10 e os vértices {20, 30, 40, 50, 60}.
+ *  - Item 2: Tempo médio de execução do algoritmo de Dijkstra para k vértices aleatórios
+ *            comparando as implementações com Vetor e com Heap Binário Indexado.
+ */
+void runStandardCaseStudy(const std::string& filename, int k_samples = 100) {
+    std::string filepath = resolveDataPath(filename);
+
+    std::cout << "\n====================================================================\n";
+    std::cout << "  ESTUDO DE CASO: " << filename << "\n";
+    std::cout << "====================================================================\n";
+
+    if (!fs::exists(filepath)) {
+        std::cout << "[AVISO] Arquivo nao encontrado em '" << filepath << "'. Pulando...\n";
+        return;
     }
 
-    std::unique_ptr<Graph> g;
     try {
-        double t0 = nowSeconds();
-        g = loadGraph(file, rep);
-        double t1 = nowSeconds();
-        double peak = peakMemoryMB();
-        printf("graph file=%s n=%d m=%lld rep=%s load_s=%.3f peak_mb=%.1f\n", file.c_str(),
-               g->numVertices(), g->numEdges(), rep.c_str(), t1 - t0, peak);
-    } catch (const std::exception &e) {
-        // Falha de carga (ex.: matriz grande demais) NAO e bug: imprimimos
-        // LOAD_FAIL com o motivo e saimos com codigo 2, para o script de
-        // experimentos registrar "OOM teorico" na tabela do relatorio.
-        printf("graph file=%s rep=%s LOAD_FAIL: %s\n", file.c_str(), rep.c_str(), e.what());
-        return 2;
+        std::cout << "[1/4] Lendo grafo de entrada..." << std::endl;
+        auto t0 = std::chrono::high_resolution_clock::now();
+        CSRGraph graph(filepath, true);
+        auto t1 = std::chrono::high_resolution_clock::now();
+        double load_time = std::chrono::duration<double>(t1 - t0).count();
+
+        std::cout << "Vertices (V): " << graph.numVertices()
+                  << " | Arestas (E): " << graph.numEdges()
+                  << " | Memoria CSR: " << std::fixed << std::setprecision(2)
+                  << (graph.memoryUsageBytes() / (1024.0 * 1024.0)) << " MB"
+                  << " | Leitura: " << load_time << " s\n\n";
+
+        // -------------------------------------------------------------------------
+        // Pergunta 1: Distância e caminho mínimo de 10 para {20, 30, 40, 50, 60}
+        // -------------------------------------------------------------------------
+        const int source = 10;
+        const std::vector<int> targets = {20, 30, 40, 50, 60};
+
+        std::cout << "[2/4] Calculando caminhos de " << source
+              << " para os cinco destinos..." << std::endl;
+        ShortestPathResult sp = dijkstraToTargets(graph, source, DijkstraMode::HEAP, targets);
+
+        std::cout << "--- [Item 1] Distancias e Caminhos Minimos (Origem = " << source << ") ---\n";
+        std::cout << std::left << std::setw(10) << "Destino"
+                  << std::setw(18) << "Distancia"
+                  << "Caminho Minimo\n";
+        std::cout << std::string(70, '-') << "\n";
+
+        for (int t : targets) {
+            std::vector<int> path = reconstructPath(sp, source, t);
+            std::cout << std::left << std::setw(10) << t;
+            if (path.empty()) {
+                std::cout << std::setw(18) << "Inf" << "Inalcancavel\n";
+            } else {
+                std::cout << std::setw(18) << std::fixed << std::setprecision(4) << sp.dist[t]
+                          << formatPath(path) << "\n";
+            }
+        }
+
+        // -------------------------------------------------------------------------
+        // Pergunta 2: Tempo médio para k vértices iniciais escolhidos aleatoriamente
+        // -------------------------------------------------------------------------
+        std::cout << "\n--- [Item 2] Tempo Medio de Execucao do Dijkstra ---\n";
+
+        std::mt19937 rng(42); // Semente fixa para reprodutibilidade científica
+        std::uniform_int_distribution<int> dist_vertex(1, graph.numVertices());
+
+        // O limite controla apenas quantas buscas completas são repetidas, nunca os vértices visitados.
+        constexpr long long max_vector_scan_work = 100'000'000;
+        const long long vertex_count = graph.numVertices();
+        const long long work_per_vector_search = vertex_count * vertex_count;
+        int sample_count = k_samples;
+        if (work_per_vector_search > max_vector_scan_work) {
+            sample_count = static_cast<int>(max_vector_scan_work / work_per_vector_search);
+            if (sample_count < 1) sample_count = 1;
+        }
+
+        std::vector<int> random_sources(sample_count);
+        for (int i = 0; i < sample_count; ++i) {
+            random_sources[i] = dist_vertex(rng);
+        }
+
+        // 2.1 Avaliação com HEAP BINÁRIO INDEXADO
+        std::cout << "[3/4] Medindo Dijkstra com heap (k = " << sample_count
+                  << ", buscas completas)..." << std::endl;
+        auto th_start = std::chrono::high_resolution_clock::now();
+        for (int s : random_sources) {
+            ShortestPathResult r = dijkstra(graph, s, DijkstraMode::HEAP);
+            (void)r;
+        }
+        auto th_end = std::chrono::high_resolution_clock::now();
+        double heap_total_s = std::chrono::duration<double>(th_end - th_start).count();
+        double heap_avg_ms = (heap_total_s * 1000.0) / sample_count;
+
+        std::cout << "  * Dijkstra [HEAP]   (k = " << sample_count << "): "
+                  << std::fixed << std::setprecision(4) << heap_avg_ms << " ms/busca "
+                  << "(Tempo total: " << heap_total_s << " s)\n";
+
+        // 2.2 Avaliação com VETOR
+        // Usa as mesmas origens do heap; cada execução ainda calcula distâncias no grafo inteiro.
+        std::cout << "[4/4] Medindo Dijkstra com vetor (k = " << sample_count
+                  << ", buscas completas)..." << std::endl;
+        auto tv_start = std::chrono::high_resolution_clock::now();
+        for (int i = 0; i < sample_count; ++i) {
+            ShortestPathResult r = dijkstra(graph, random_sources[i], DijkstraMode::VECTOR);
+            (void)r;
+        }
+        auto tv_end = std::chrono::high_resolution_clock::now();
+        double vec_total_s = std::chrono::duration<double>(tv_end - tv_start).count();
+        double vec_avg_ms = (vec_total_s * 1000.0) / sample_count;
+
+        std::cout << "  * Dijkstra [VECTOR] (k = " << sample_count << "): "
+                  << std::fixed << std::setprecision(4) << vec_avg_ms << " ms/busca "
+                  << "(Tempo total: " << vec_total_s << " s)\n";
+
+    } catch (const std::exception& e) {
+        std::cout << "[ERRO ao processar " << filename << "]: " << e.what() << "\n";
+    }
+}
+
+/**
+ * @brief Executa o Estudo de Caso da Rede de Colaboração entre pesquisadores da Computação.
+ * 
+ * Mapeia os nomes em `rede_colaboracao_vertices.txt` para seus respectivos IDs numéricos
+ * e calcula a distância e o caminho mínimo de "Edsger W. Dijkstra" para:
+ *  - Alan M. Turing
+ *  - J. B. Kruskal
+ *  - Jon M. Kleinberg
+ *  - Éva Tardos
+ *  - Daniel R. Figueiredo
+ */
+void runCollaborationStudy() {
+    std::string edges_path = resolveDataPath("rede_colaboracao.txt");
+    std::string vertices_path = resolveDataPath("rede_colaboracao_vertices.txt");
+
+    std::cout << "\n====================================================================\n";
+    std::cout << "  ESTUDO DE CASO: REDE DE COLABORACAO CIENTIFICA (DBLP)\n";
+    std::cout << "====================================================================\n";
+
+    if (!fs::exists(edges_path) || !fs::exists(vertices_path)) {
+        std::cout << "[AVISO] Arquivos da rede de colaboracao nao encontrados na pasta data/.\n";
+        return;
     }
 
-    int n = g->numVertices();
-    auto checkV = [&](int s) {
-        if (s < 1 || s > n) {
-            std::cerr << "Vertice " << s << " fora de 1.." << n << "\n";
-            std::exit(1);
+    // Leitura do dicionário de pesquisadores (formato: ID,Nome do Pesquisador)
+    std::unordered_map<std::string, int> name_to_id;
+    std::vector<std::string> id_to_name;
+
+    std::ifstream vfile(vertices_path);
+    std::string line;
+    while (std::getline(vfile, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
         }
-        return s - 1;
+        std::size_t comma_pos = line.find(',');
+        if (comma_pos == std::string::npos) continue;
+
+        int id = std::stoi(line.substr(0, comma_pos));
+        std::string name = line.substr(comma_pos + 1);
+
+        if (id >= static_cast<int>(id_to_name.size())) {
+            id_to_name.resize(id + 1);
+        }
+        id_to_name[id] = name;
+        name_to_id[name] = id;
+    }
+
+    CSRGraph graph(edges_path, true);
+    std::cout << "Rede carregada -> Pesquisadores (V): " << graph.numVertices()
+              << " | Coautorias (E): " << graph.numEdges() << "\n\n";
+
+    const std::string source_researcher = "Edsger W. Dijkstra";
+    const std::vector<std::string> target_researchers = {
+        "Alan M. Turing",
+        "J. B. Kruskal",
+        "Jon M. Kleinberg",
+        "Éva Tardos",
+        "Daniel R. Figueiredo"
     };
 
-    std::error_code ec;
-    fs::create_directories(outDir, ec);
-    if (ec) {
-        std::cerr << "Nao foi possivel criar dir de saida: " << outDir << "\n";
-        return 1;
+    auto it_src = name_to_id.find(source_researcher);
+    if (it_src == name_to_id.end()) {
+        std::cerr << "[ERRO] Pesquisador origem nao encontrado: " << source_researcher << "\n";
+        return;
     }
 
-    if (doStats) {
-        double t0 = nowSeconds();
-        Stats s = computeStats(*g);
-        double t1 = nowSeconds();
-        printf("stats gmin=%d gmax=%d gavg=%.4f gmed=%.2f time_ms=%.1f\n", s.gmin, s.gmax,
-               s.gavg, s.gmed, (t1 - t0) * 1000.0);
-        std::ofstream out(outDir + "/stats.txt");
-        out << "n " << s.n << "\nm " << s.m << "\ngmin " << s.gmin << "\ngmax " << s.gmax
-            << "\ngavg " << s.gavg << "\ngmed " << s.gmed << "\n";
+    const int src_id = it_src->second;
+    ShortestPathResult sp = dijkstra(graph, src_id, DijkstraMode::HEAP);
+
+    for (const auto& target_name : target_researchers) {
+        std::cout << "--------------------------------------------------------------------\n";
+        std::cout << "Pesquisador Alvo: " << target_name << "\n";
+
+        auto it_tgt = name_to_id.find(target_name);
+        if (it_tgt == name_to_id.end()) {
+            std::cout << "  [!] Nome nao encontrado no arquivo de vertices.\n";
+            continue;
+        }
+
+        int tgt_id = it_tgt->second;
+        std::vector<int> path = reconstructPath(sp, src_id, tgt_id);
+
+        if (path.empty()) {
+            std::cout << "  Distancia: Inf (Sem caminho de coautoria na componente conexa)\n";
+        } else {
+            std::cout << "  ID do Vertice:    " << tgt_id << "\n";
+            std::cout << "  Distancia Minima: " << std::fixed << std::setprecision(6) << sp.dist[tgt_id] << "\n";
+            std::cout << "  Caminho Minimo (" << (path.size() - 1) << " coautoria(s)):\n    ";
+            for (std::size_t i = 0; i < path.size(); ++i) {
+                int u = path[i];
+                std::cout << id_to_name[u] << " [" << u << "]";
+                if (i + 1 < path.size()) std::cout << " -> ";
+            }
+            std::cout << "\n";
+        }
+    }
+    std::cout << "--------------------------------------------------------------------\n";
+}
+
+int main(int argc, char* argv[]) {
+    // Se o usuário passar um arquivo específico por linha de comando, roda apenas ele
+    if (argc > 1) {
+        std::string arg = argv[1];
+        if (arg == "colaboracao") {
+            runCollaborationStudy();
+        } else {
+            runStandardCaseStudy(arg, 100);
+        }
+        return 0;
     }
 
-    for (int s : bfsSrc) {
-        int src = checkV(s);
-        double t0 = nowSeconds();
-        BFSResult r = bfsAuto(*g, src);
-        double t1 = nowSeconds();
-        printf("bfs src=%d time_ms=%.1f\n", s, (t1 - t0) * 1000.0);
-        writeTree(outDir + "/bfs_" + std::to_string(s) + ".txt", r.parent, r.level);
+    // Execução padrão: processa grafo_W_3.txt até grafo_W_7.txt e a rede de colaboração
+    for (int i = 3; i <= 7; ++i) {
+        runStandardCaseStudy("grafo_W_" + std::to_string(i) + ".txt", 100);
     }
-    for (int s : dfsSrc) {
-        int src = checkV(s);
-        double t0 = nowSeconds();
-        DFSResult r = dfsAuto(*g, src);
-        double t1 = nowSeconds();
-        printf("dfs src=%d time_ms=%.1f\n", s, (t1 - t0) * 1000.0);
-        writeTree(outDir + "/dfs_" + std::to_string(s) + ".txt", r.parent, r.level);
-    }
-    for (auto &p : dists) {
-        int u = checkV(p.first), v = checkV(p.second);
-        double t0 = nowSeconds();
-        int d = distanceAuto(*g, u, v);
-        double t1 = nowSeconds();
-        printf("dist u=%d v=%d d=%d time_ms=%.1f\n", p.first, p.second, d,
-               (t1 - t0) * 1000.0);
-    }
-    if (diamExact) {
-        if (n > 50000)
-            fprintf(stderr, "AVISO: diametro exato com n=%d pode levar muito tempo\n", n);
-        double t0 = nowSeconds();
-        DiameterResult d = diameterExact(*g);
-        double t1 = nowSeconds();
-        printf("diameter mode=exact value=%d a=%d b=%d time_ms=%.1f\n", d.value, d.a + 1,
-               d.b + 1, (t1 - t0) * 1000.0);
-    }
-    if (diamApprox) {
-        int s0 = checkV(diamStart);
-        double t0 = nowSeconds();
-        DiameterResult d = diameterApproxDoubleSweep(*g, s0);
-        double t1 = nowSeconds();
-        printf("diameter mode=approx value=%d a=%d b=%d time_ms=%.1f\n", d.value, d.a + 1,
-               d.b + 1, (t1 - t0) * 1000.0);
-    }
-    if (doComp) {
-        double t0 = nowSeconds();
-        Components c = componentsAuto(*g);
-        double t1 = nowSeconds();
-        size_t largest = c.members.empty() ? 0 : c.members.front().size();
-        size_t smallest = c.members.empty() ? 0 : c.members.back().size();
-        printf("components count=%d largest=%d smallest=%d time_ms=%.1f\n",
-               (int)c.members.size(), (int)largest, (int)smallest, (t1 - t0) * 1000.0);
-        std::ofstream out(outDir + "/components.txt");
-        out << c.members.size() << "\n";
-        for (auto &mem : c.members) {
-            out << mem.size();
-            for (int v : mem)
-                out << ' ' << (v + 1);
-            out << '\n';
-        }
-    }
-    if (benchBfs > 0) {
-        // Benchmark do enunciado: K buscas de origens DIFERENTES e
-        // distribuidas pelo grafo (i*n/K), para a media nao depender de
-        // uma regiao so. O tempo de cada busca exclui I/O (so o algoritmo).
-        int k = benchBfs > n ? n : benchBfs;
-        double total = 0;
-        for (int i = 0; i < k; ++i) {
-            int src = (int)((long long)i * n / k); // origens distribuidas
-            double t0 = nowSeconds();
-            BFSResult r = bfsAuto(*g, src);
-            (void)r;
-            double t1 = nowSeconds();
-            total += (t1 - t0) * 1000.0;
-        }
-        printf("bench_bfs k=%d avg_ms=%.2f\n", k, total / k);
-    }
-    if (benchDfs > 0) {
-        int k = benchDfs > n ? n : benchDfs;
-        double total = 0;
-        for (int i = 0; i < k; ++i) {
-            int src = (int)((long long)i * n / k);
-            double t0 = nowSeconds();
-            DFSResult r = dfsAuto(*g, src);
-            (void)r;
-            double t1 = nowSeconds();
-            total += (t1 - t0) * 1000.0;
-        }
-        printf("bench_dfs k=%d avg_ms=%.2f\n", k, total / k);
-    }
+
+    runCollaborationStudy();
+
     return 0;
 }

@@ -1,30 +1,37 @@
-cmake_minimum_required(VERSION 3.16)
-project(TrabalhoGrafos CXX)
+cmake_minimum_required(VERSION 3.10)
+project(TrabalhoGrafos VERSION 1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Release)
+    set(CMAKE_BUILD_TYPE Release)
 endif()
-# Otimizacao padrao do CMake Release (-O3). Nao forcar -march=native para o
-# binario continuar portavel entre sua maquina e a do professor.
 
-add_library(graflib STATIC
-  src/CSRGraph.cpp
-  src/BitMatrixGraph.cpp
-  src/algorithms.cpp
-  src/io.cpp
+# Otimizações de performance para os grafos pesados da Parte 2
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native -DNDEBUG")
+
+include_directories(include)
+
+# Biblioteca estática com a implementação do CSR e algoritmos de grafos
+add_library(grafos_lib
+    src/CSRGraph.cpp
+    src/algorithms.cpp
 )
-target_include_directories(graflib PUBLIC include)
-target_compile_options(graflib PRIVATE -Wall -Wextra -Wpedantic)
 
+# Executável principal para os estudos de caso dos grafos W e rede de coautoria
 add_executable(grafo src/main.cpp)
-target_link_libraries(grafo PRIVATE graflib)
+target_link_libraries(grafo PRIVATE grafos_lib)
 
+# Executável da suíte de testes unitários (totalmente em memória)
 add_executable(test_grafo tests/test_grafo.cpp)
-target_link_libraries(test_grafo PRIVATE graflib)
+target_link_libraries(test_grafo PRIVATE grafos_lib)
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(test_grafo PRIVATE -UNDEBUG)
+elseif(MSVC)
+    target_compile_options(test_grafo PRIVATE /UNDEBUG)
+endif()
 
 enable_testing()
 add_test(NAME test_grafo COMMAND test_grafo)

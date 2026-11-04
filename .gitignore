@@ -1,5 +1,6 @@
 # Build e saidas
 build/
+build-clean/
 build-debug/
 out/
 out_estudos/

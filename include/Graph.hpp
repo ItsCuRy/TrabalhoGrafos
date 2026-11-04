@@ -1,31 +1,40 @@
-// Trabalho P1 - Teoria dos Grafos (COS 242)
-// ---------------------------------------------------------------
-// Este arquivo define o "contrato" que as duas representacoes de
-// grafo precisam cumprir (lista CSR e matriz de bits). A ideia e
-// que os algoritmos (BFS, DFS, diametro...) recebam um `const Graph&`
-// sem precisar saber qual representacao esta por tras: para trocar
-// de uma para outra basta mudar a flag --rep na linha de comando.
-// Com isso a comparacao de tempo/memoria do estudo de caso fica justa.
-//
-// Convenção: vertices numerados de 0 a n-1. O arquivo de entrada usa
-// 1..n, entao a conversao (subtrair 1) acontece na camada de I/O.
-
 #pragma once
+#include <cstddef>
 
-// Interface abstrata de grafo nao-direcionado.
-// Vertices sao numerados de 0 a n-1 (o arquivo usa 1..n; a conversao
-// acontece na camada de I/O). Grafo e estatico: construido uma vez,
-// so consultado depois.
-
+/**
+ * @brief Interface abstrata para representação de grafos (ponderados ou não).
+ * 
+ * Adota indexação 1-based (vértices de 1 até n) para manter compatibilidade
+ * direta com os arquivos de entrada da disciplina COS242.
+ */
 class Graph {
 public:
     virtual ~Graph() = default;
 
+    /// Retorna o número total de vértices (n).
     virtual int numVertices() const = 0;
-    // Numero de arestas nao-direcionadas como lidas (cada linha = 1).
+
+    /// Retorna o número total de arestas (m).
     virtual long long numEdges() const = 0;
-    virtual int degree(int v) const = 0;
-    // k-esimo vizinho de v, com 0 <= k < degree(v). A ordem e arbitraria
-    // mas deterministica para a mesma construcao.
-    virtual int neighbor(int v, int k) const = 0;
+
+    /// Indica se o grafo possui pesos associados às arestas.
+    virtual bool isWeighted() const = 0;
+
+    /// Indica se o grafo contém alguma aresta com peso negativo (w < 0).
+    virtual bool hasNegativeWeight() const = 0;
+
+    /// Retorna o grau do vértice u (1 <= u <= n).
+    virtual int degree(int u) const = 0;
+
+    /// Ponteiro para o início da lista contígua de vizinhos do vértice u.
+    virtual const int* neighborsBegin(int u) const = 0;
+
+    /// Ponteiro para o fim (one-past-the-end) da lista de vizinhos do vértice u.
+    virtual const int* neighborsEnd(int u) const = 0;
+
+    /// Retorna o peso da k-ésima aresta incidente ao vértice u (0 <= k < degree(u)).
+    virtual float edgeWeight(int u, int k) const = 0;
+
+    /// Retorna a estimativa de memória consumida pela estrutura em bytes.
+    virtual std::size_t memoryUsageBytes() const = 0;
 };

@@ -1,48 +1,69 @@
-// Trabalho P1 - Teoria dos Grafos (COS 242)
-// ---------------------------------------------------------------
-// Lista de adjacencia em formato CSR ("compressed sparse row").
-//
-// Em vez de um vector por vertice (que custa ~24 bytes de administracao
-// por vertice + folgas de capacidade), guardamos tudo em dois vetores
-// corridos:
-//   offsets[v] .. offsets[v+1]-1  -> fatia de `edges` com os vizinhos de v.
-//
-// Exemplo: 0 ligado a {1,2}, 1 ligado a {0}, 2 ligado a {0,1}:
-//   offsets = [0, 2, 3, 5]
-//   edges   = [1, 2, 0, 0, 1]
-// Os vizinhos de v vao de edges[offsets[v]] ate edges[offsets[v+1]].
-//
-// Memoria total: (n+1)*4 + 2m*4 bytes. No maior grafo (4,8M vertices e
-// 46,5M arestas) isso da ~373 MB, enquanto vector<vector<int>> estouraria
-// so com o custo dos 4,8 milhoes de vectors (~115 MB) mais fragmentacao.
-// O preco e que o grafo fica estatico: depois de montado nao da para
-// adicionar arestas. Para este trabalho isso e perfeito, porque o grafo
-// e lido uma vez e so consultado depois.
-
 #pragma once
 #include "Graph.hpp"
-#include <utility>
 #include <vector>
+#include <string>
+#include <utility>
+#include <tuple>
 
-// Lista de adjacencia em formato CSR (compressed sparse row):
-//   offsets[v] .. offsets[v+1]-1  = fatia de edges com os vizinhos de v.
-// Memoria: (n+1)*4 + 2m*4 bytes. Sem overhead por vertice, ao contrario
-// de vector<vector<int>> (~24 B por vertice + folgas de capacidade).
+/**
+ * @brief Implementação de Grafo utilizando Compressed Sparse Row (CSR).
+ * 
+ * Decisão de Projeto:
+ * Utiliza o padrão Structure of Arrays (SoA) mantendo vetores separados e contíguos
+ * para offsets (offsets_), destinos das arestas (edges_) e pesos (weights_).
+ * Isso maximiza a localidade espacial de cache L1/L2 durante a travessia no Dijkstra
+ * e evita o overhead de ponteiros de listas encadeadas ou std::vector<std::vector<...>>.
+ */
 class CSRGraph : public Graph {
+private:
+    int n_ = 0;                      ///< Número de vértices
+    long long m_ = 0;                ///< Número de arestas não-direcionadas
+    bool weighted_ = true;           ///< Flag indicando se o grafo é ponderado
+    bool has_negative_ = false;      ///< Flag indicando presença de peso negativo
+
+    /**
+     * Vetor de índices (tamanho n_ + 2 para indexação 1-based).
+     * Os vizinhos do vértice u estão no intervalo [offsets_[u], offsets_[u + 1]).
+     */
+    std::vector<int> offsets_;
+
+    /// Vetor contíguo contendo os vértices de destino (tamanho 2 * m_).
+    std::vector<int> edges_;
+
+    /// Vetor contíguo paralelo a edges_ contendo os pesos das arestas (tamanho 2 * m_).
+    std::vector<float> weights_;
+
 public:
-    CSRGraph(int n, std::vector<int> offsets, std::vector<int> edges, long long m);
+    /**
+     * @brief Constrói o grafo em formato CSR diretamente a partir de um arquivo texto.
+     * @param filename Caminho para o arquivo (formato: linha 1 = N; demais linhas = u v [w]).
+     * @param weighted Se true, lê a terceira coluna como peso (float).
+     */
+    explicit CSRGraph(const std::string& filename, bool weighted = true);
 
-    // Constroi a partir de lista de pares 0-indexados (usado nos testes).
-    static CSRGraph fromEdgeList(int n, const std::vector<std::pair<int, int>> &pairs);
+    /**
+     * @brief Construtor em memória para grafos não-ponderados (útil para testes).
+     */
+    CSRGraph(int n, const std::vector<std::pair<int, int>>& edges);
 
+    /**
+     * @brief Construtor em memória para grafos ponderados (útil para testes unitários).
+     */
+    CSRGraph(int n, const std::vector<std::tuple<int, int, float>>& weighted_edges);
+
+    // Implementações da interface Graph
     int numVertices() const override;
     long long numEdges() const override;
-    int degree(int v) const override;
-    int neighbor(int v, int k) const override;
+    bool isWeighted() const override;
+    bool hasNegativeWeight() const override;
+    int degree(int u) const override;
+    const int* neighborsBegin(int u) const override;
+    const int* neighborsEnd(int u) const override;
+    float edgeWeight(int u, int k) const override;
+    std::size_t memoryUsageBytes() const override;
 
-private:
-    int n_;
-    long long m_;
-    std::vector<int> offsets_;
-    std::vector<int> edges_;
+    /// Acesso direto ao ponteiro de pesos do vértice u para iteração rápida no CSR
+    const float* weightsBegin(int u) const {
+        return weights_.empty() ? nullptr : &weights_[offsets_[u]];
+    }
 };
