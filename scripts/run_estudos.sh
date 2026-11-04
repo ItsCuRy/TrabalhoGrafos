@@ -38,24 +38,24 @@ if [[ ! -f "${GRAFO_BIN}" ]]; then
     exit 1
 fi
 
+# Executa o estudo da Rede de Colaboração caso os arquivos estejam em data/
+if [[ -f "${DATA_DIR}/rede_colaboracao.txt" && -f "${DATA_DIR}/rede_colaboracao_vertices.txt" ]]; then
+    echo "Processando Rede de Colaboracao..."
+    echo "--- REDE DE COLABORACAO ---" >> "${RESULTS_FILE}"
+
+    "${GRAFO_BIN}" colaboracao 2>&1 | tee -a "${RESULTS_FILE}"
+fi
+
 # Executa para cada grafo ponderado encontrado em data/grafo_W_*.txt
 for gfile in "${DATA_DIR}"/grafo_W_*.txt; do
     if [[ -f "${gfile}" ]]; then
         echo "Processando ${gfile}..."
         echo "--- GRAFO: $(basename "${gfile}") ---" >> "${RESULTS_FILE}"
-        
+
         "${GRAFO_BIN}" "${gfile}" 2>&1 | tee -a "${RESULTS_FILE}"
-        
+
         echo "" >> "${RESULTS_FILE}"
     fi
 done
-
-# Executa o estudo da Rede de Colaboração caso os arquivos estejam em data/
-if [[ -f "${DATA_DIR}/rede_colaboracao.txt" && -f "${DATA_DIR}/rede_colaboracao_vertices.txt" ]]; then
-    echo "Processando Rede de Colaboracao..."
-    echo "--- REDE DE COLABORACAO ---" >> "${RESULTS_FILE}"
-    
-    "${GRAFO_BIN}" colaboracao 2>&1 | tee -a "${RESULTS_FILE}"
-fi
 
 echo "Concluido! Todos os resultados foram salvos em: ${RESULTS_FILE}"
